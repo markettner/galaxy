@@ -1,0 +1,7 @@
+.DS_Store
+
+# Local preview scaffold (static server for the browser tool)
+.claude/
+
+# Working material: source SVGs, notes and raw capture. Not needed at runtime.
+assets/
