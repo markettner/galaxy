@@ -199,6 +199,9 @@
       // 0..1, written by the driver. 1 is settled, 0 is fully dispersed and
       // invisible (particleRevealProgress(0) === 0).
       this.intro = 0;
+      // 0..1 brightness multiplier, independent of `intro`: fades the shape
+      // out in place, without dispersing it. The Sol & Luna dive uses it.
+      this.fade = 1;
 
       this.contentHalfWidth = this._measureContent(layers);
       this._buildMaterials(shaders, pixelRatio);
@@ -400,7 +403,7 @@
         u.uPathSpeed.value = speed;
         u.uFlowSpeed.value = clamp(cfg.flowSpeed, 0, 3) * motionGate;
         u.uTwinkleSpeed.value = reduceMotion ? 0 : clamp(cfg.twinkleSpeed, 0, 2) * motionGate;
-        u.uIntensity.value = clamp(cfg.intensity * (layer.isCore ? 1.22 : 1), 0.1, 3);
+        u.uIntensity.value = clamp(cfg.intensity * (layer.isCore ? 1.22 : 1), 0.1, 3) * this.fade;
         u.uScatterSize.value.set(ctx.scatterX, ctx.scatterY);
         u.uViewportAspect.value = ctx.aspect;
         u.uLensActive.value = ctx.lensStrength;
@@ -460,7 +463,7 @@
       const fade = onPath ? tipFade(progress, layer.loop) : 1;
       const size = onPath ? sizeFalloff(progress, cfg.sizeFalloff) : 1;
       const visibility = fade * size * Math.sqrt(reveal)
-        * THREE.MathUtils.smoothstep(reveal, 0, 0.2);
+        * THREE.MathUtils.smoothstep(reveal, 0, 0.2) * this.fade;
       return clamp(visibility, 0, 1);
     }
 

@@ -681,7 +681,7 @@ function generateBackdrop(armSet, cfg = DEFAULTS) {
 }
 
 global.GalaxyField = {
-  generateGalaxyField, generateBackdrop, GalaxyArmCurve, mulberry32, createPathTexture,
+  generateGalaxyField, generateBackdrop, GalaxyArmCurve, mulberry32, createPathTexture, pathSource,
   samplePath, samplePathWidth, applyGalaxyIntroMotion, particleRevealProgress, particleMotionMass,
   tipFade, sizeFalloff, densityProgress, flowSign,
   ARMS, GALAXY_PALETTE, SECONDARY_COLOR_SEEDS, DEFAULTS,

@@ -29,6 +29,15 @@
  * which is what makes the seam disappear — and it halves how long the swap
  * takes. Retune with TIMING below.
  * ---------------------------------------------------------------------------
+ * Sol & Luna
+ *
+ * Tapping the galaxy dives into its core and hands over to the Sol & Luna
+ * player (sol.js). It draws through this renderer, composited over this
+ * frame, so the shared sky stays exactly where it is throughout — only the
+ * galaxy shape zooms and fades. The handover is timed so our galaxy is already
+ * rushing toward the viewer when Sol's own fly-through takes over. Scrolling
+ * carries on round the ring from the galaxy; Esc goes back to it. See DIVE.
+ * ---------------------------------------------------------------------------
  */
 (function () {
   'use strict';
@@ -200,16 +209,26 @@
   let drag = null;
   canvas.style.touchAction = 'none';
 
+  // A tap is a press that neither travels nor lingers — anything more is a
+  // drag, and keeps rotating exactly as before.
+  const TAP_SLOP_PX = 6;
+  const TAP_MAX_MS = 400;
+  let tap = null;
+
   canvas.addEventListener('pointerdown', (e) => {
     if (!e.isPrimary || e.button !== 0) return;
     try { canvas.setPointerCapture(e.pointerId); } catch { return; }
     drag = { id: e.pointerId, x: e.clientX, y: e.clientY };
+    tap = { id: e.pointerId, x: e.clientX, y: e.clientY, at: performance.now() };
     input.pointer.pressed = true;
   });
   canvas.addEventListener('pointermove', (e) => {
     if (!e.isPrimary) return;
+    if (tap && e.pointerId === tap.id
+      && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) > TAP_SLOP_PX) tap = null;
     const rect = canvas.getBoundingClientRect();
-    input.pointer.active = true;
+    // Hover only smears the galaxy; Sol & Luna has no hover interaction.
+    input.pointer.active = mode === 'galaxy';
     input.pointer.x = clampUnit(((e.clientX - rect.left) / rect.width) * 2 - 1);
     input.pointer.y = clampUnit(-(((e.clientY - rect.top) / rect.height) * 2 - 1));
     if (drag && e.pointerId === drag.id) {
@@ -219,8 +238,9 @@
       // gesture the drag stands down. Horizontal drags, and every mouse drag,
       // are untouched.
       if (!(e.pointerType === 'touch' && scroll.suppressDrag())) {
-        // Drag surface: 0.005 rad per pixel.
-        rotateBy({ x: (e.clientX - drag.x) * 0.005, y: (e.clientY - drag.y) * 0.005 });
+        // Drag surface: 0.005 rad per pixel. Sol only swings sideways.
+        if (mode === 'sol' || mode === 'diving') sol?.rotate((e.clientX - drag.x) * 0.005);
+        else rotateBy({ x: (e.clientX - drag.x) * 0.005, y: (e.clientY - drag.y) * 0.005 });
       }
       drag.x = e.clientX;
       drag.y = e.clientY;
@@ -231,10 +251,17 @@
       drag = null;
       input.pointer.pressed = false;
       faceForward();
+      sol?.resetRotation();
     }
   };
-  canvas.addEventListener('pointerup', endDrag);
-  canvas.addEventListener('pointercancel', endDrag);
+  canvas.addEventListener('pointerup', (e) => {
+    const wasTap = tap && e.pointerId === tap.id && performance.now() - tap.at <= TAP_MAX_MS
+      && !(e.pointerType === 'touch' && scroll.suppressDrag());
+    tap = null;
+    endDrag(e);
+    if (wasTap) onTap();
+  });
+  canvas.addEventListener('pointercancel', (e) => { tap = null; endDrag(e); });
   // Leaving the canvas ends the hover, but it is *not* a discontinuity: the
   // smear has to keep coasting home over its remaining settle time, exactly as
   // it does when the pointer stops moving but stays inside. Raising
@@ -341,6 +368,13 @@
   }
 
   function step(dir) {
+    if (mode === 'sol') { leaveSol(dir); return; }
+    if (mode !== 'galaxy') {
+      // Mid-handover a scroll is ignored, but the scroll driver still needs
+      // its commit or it would stay disarmed.
+      scroll.commit();
+      return;
+    }
     const i = ORDER.indexOf(active.key);
     // A shape reached by ?arms= but not on the ring (legacy) joins it here
     // rather than being a dead end.
@@ -370,7 +404,7 @@
   const scroll = new window.GalaxyScroll({
     target: canvas,
     onStep: step,
-    onTug: (v) => { tug = Math.min(Math.abs(v), 1); },
+    onTug: (v) => { tug = mode === 'galaxy' ? Math.min(Math.abs(v), 1) : 0; },
   });
 
   window.addEventListener('keydown', (e) => {
@@ -378,10 +412,156 @@
       ArrowDown: { x: 0, y: 0.08 }, ArrowLeft: { x: -0.08, y: 0 },
       ArrowRight: { x: 0.08, y: 0 }, ArrowUp: { x: 0, y: -0.08 },
     }[e.key];
+    if (arrow && mode === 'sol') { e.preventDefault(); sol.rotate(arrow.x); return; }
     if (arrow) { e.preventDefault(); rotateBy(arrow); return; }
+    if (e.key === 'Escape' && mode === 'sol') { leaveSol(0); return; }
+    if (e.key === 'Enter' && (mode === 'galaxy' || mode === 'sol')) { onTap(); return; }
+    if ((e.key === 'r' || e.key === 'R') && mode === 'sol') { replaySol(); return; }
     if (e.key === 'r' || e.key === 'R') replay();
     if (e.key === ' ') { e.preventDefault(); setPaused(!paused); }
   });
+
+  // ---------------------------------------------------------------------------
+  // Sol & Luna — tap the galaxy to dive into its core.
+  //
+  //   galaxy ──tap──> diving ──> sol ──scroll──> leaving ──> next shape
+  //                                  └──Esc────> leaving ──> galaxy
+  //
+  // The player is built at startup, in slices. Compiling its programs costs a
+  // few hundred ms on a cold cache, and WebKit does much of that synchronously
+  // even with KHR_parallel_shader_compile — built after the galaxy had
+  // assembled, that stalled its rotation. At startup it lands in the opening's
+  // first second, while the field is still dispersed and invisible
+  // (particleRevealProgress(0) === 0), so there is nothing on screen to stall.
+  // ---------------------------------------------------------------------------
+
+  let sol = null;
+  let solBuild = null;
+  let solPending = false; // tapped before the player was ready
+
+  function ensureSol() {
+    if (!sol) {
+      sol = new window.SolPlayer(renderer, { continuous: !reduceMotion, centeredIntro: true });
+      sol.resize(viewport.width, viewport.height, pixelRatio);
+      solBuild = sol.build();
+    }
+    return solBuild;
+  }
+
+  // All on Sol's own clock. Sol opens on a face-on five-arm galaxy framed
+  // exactly like ours, which sits still for about a second (build-in and hold)
+  // before its fly-through starts. So a tap starts Sol's clock at SOL_START,
+  // just before the flight, and our galaxy flies in *with* it: its zoom is the
+  // approach factor Sol's INTRO_GALAXY gives a star at mid depth,
+  // startDepth / max(1.5, startDepth - 38 * expansion). The crossfade sits
+  // inside the rush, FADE_FROM..FADE_TO, where both galaxies are streaking off
+  // the edges and their different arm shapes can't be compared.
+  const DIVE = reduceMotion
+    ? { SOL_START: 8, FADE_FROM: 8, FADE_TO: 8.3, LEAVE: 0.3 }
+    : { SOL_START: 1.2, FADE_FROM: 1.8, FADE_TO: 2.35, LEAVE: 0.9 };
+  const DIVE_DEPTH = 12;
+
+  function diveZoomAt(solSeconds) {
+    if (reduceMotion) return 1;
+    const { expansion } = window.SolPlayer.timeline(window.SolPlayer.warpClock(solSeconds, true) + 0.02);
+    return DIVE_DEPTH / Math.max(1.5, DIVE_DEPTH - 38 * expansion);
+  }
+
+  let mode = 'galaxy'; // 'galaxy' | 'diving' | 'sol' | 'leaving'
+  let modeStart = 0;
+  let solOrigin = 0;   // elapsedSeconds at which Sol's clock reads 0
+  let solSeek = null;  // debug: pin Sol's clock (window.galaxy.sol.seek)
+  let solOpacity = 0;
+
+  const solClock = (elapsed) => solSeek ?? elapsed - solOrigin;
+
+  function setMode(next) {
+    mode = next;
+    modeStart = elapsedSeconds(performance.now());
+  }
+
+  function canDive() {
+    // Only on the galaxy, and not while it is being swapped for another shape.
+    // Its own opening converge doesn't count, once it has mostly formed.
+    return mode === 'galaxy' && active.key === 'galaxy' && !fromShape && active.intro >= 0.85;
+  }
+
+  function onTap() {
+    // In the finished scene a tap sets the pair orbiting, or pauses them.
+    if (mode === 'sol') { sol.toggleOrbit(); return; }
+    if (!canDive()) return;
+    if (!sol?.ready) {
+      ensureSol();
+      solPending = true;
+      return;
+    }
+    startDive();
+  }
+
+  function startDive() {
+    faceForward();
+    sol.resetOrbit();
+    input.pointer.active = false;
+    setMode('diving');
+    solOrigin = modeStart - DIVE.SOL_START;
+  }
+
+  function replaySol() {
+    sol.resetOrbit();
+    solOrigin = elapsedSeconds(performance.now()) - (reduceMotion ? DIVE.SOL_START : 0);
+  }
+
+  /**
+   * dir 0 goes back to the galaxy, which re-converges while Sol fades off it.
+   * dir ±1 carries on round the ring as a scroll from the galaxy would: the
+   * galaxy is already out of sight, so the next shape simply converges in.
+   */
+  function leaveSol(dir) {
+    if (mode !== 'sol') return;
+    setMode('leaving');
+    const galaxy = shapes.galaxy;
+    galaxy.intro = 0;
+    galaxy.fade = 1;
+    spinRoot.scale.setScalar(1);
+    if (dir === 0) {
+      // A genuine discontinuity for the hover smear, as with a replay.
+      input.pointer.reset = true;
+      beginTransition(null, galaxy, {
+        OUT: 0, IN_DELAY: 0.15, IN: reduceMotion ? 0.3 : 4.5, COMMIT: 1.0,
+        easeIn: linear, easeOut: linear,
+      });
+      return;
+    }
+    const next = ORDER[(ORDER.indexOf('galaxy') + (dir > 0 ? 1 : -1) + ORDER.length) % ORDER.length];
+    beginTransition(null, shapes[next], { ...TIMING, OUT: 0 });
+  }
+
+  /** Per-frame bookkeeping for the handover: galaxy zoom and fade, Sol opacity. */
+  function advanceSol(elapsed) {
+    if (solPending && sol?.ready) {
+      solPending = false;
+      if (canDive()) startDive();
+    }
+    const galaxy = shapes.galaxy;
+    let zoom = 1;
+    solOpacity = 0;
+    if (mode === 'diving') {
+      const solT = solClock(elapsed);
+      zoom = diveZoomAt(solT);
+      solOpacity = eased((solT - DIVE.FADE_FROM) / (DIVE.FADE_TO - DIVE.FADE_FROM));
+      galaxy.fade = 1 - solOpacity;
+      if (solT >= DIVE.FADE_TO) setMode('sol');
+    } else if (mode === 'sol') {
+      solOpacity = 1;
+      galaxy.fade = 0;
+    } else if (mode === 'leaving') {
+      const t = elapsed - modeStart;
+      solOpacity = 1 - eased(t / DIVE.LEAVE);
+      if (t >= DIVE.LEAVE) setMode('galaxy');
+    }
+    // Zoom the shape, not the camera: the sky above spinRoot stays put.
+    spinRoot.scale.setScalar(zoom);
+  }
 
   // The opening intro is just a transition with nothing to disperse first.
   replay();
@@ -406,6 +586,7 @@
     camera.bottom = -h / 2;
     camera.updateProjectionMatrix();
     postfx.setSize(Math.floor(w * pixelRatio), Math.floor(h * pixelRatio));
+    sol?.resize(w, h, pixelRatio);
   }
   window.addEventListener('resize', resize);
   if (typeof ResizeObserver !== 'undefined') new ResizeObserver(resize).observe(canvas);
@@ -463,6 +644,8 @@
 
     scroll.tick();
     const blend = advanceTransition(elapsed);
+    advanceSol(elapsed);
+
 
     // Viewport-derived scatter volume and camera zoom. The three shapes do not
     // all want the same frame on a narrow viewport, so it is interpolated
@@ -532,7 +715,7 @@
 
     for (const key of shapeKeys) {
       const shape = shapes[key];
-      shape.setVisible(shape.intro > 0.001);
+      shape.setVisible(shape.intro > 0.001 && shape.fade > 0.001);
       if (!shape.visible) continue;
       shape.update(ctx);
     }
@@ -555,10 +738,13 @@
     dominant.updateFlareMotion(flareU);
 
     postfx.render(scene, camera);
+    // Sol & Luna composites over the frame just drawn.
+    if (mode !== 'galaxy') sol?.render(solClock(elapsed), solOpacity);
     requestAnimationFrame(frame);
   }
 
   requestAnimationFrame(frame);
+  ensureSol();
 
   window.galaxy = {
     shapes, backdrop, order: ORDER, scene, camera, renderer, postfx, particleMotion,
@@ -572,5 +758,16 @@
       beginTransition(active, shapes[key], TIMING);
     },
     seek(t) { active.intro = clamp(t, 0, 1); },
+    sol: {
+      get player() { return sol; },
+      get mode() { return mode; },
+      get build() { return solBuild; },
+      prewarm: ensureSol,
+      enter: onTap,
+      leave: leaveSol,
+      /** Pin Sol's clock to `t` seconds (null to resume). */
+      seek(t) { solSeek = t === null ? null : Math.max(0, t); },
+      dive: DIVE,
+    },
   };
 })();
