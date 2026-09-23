@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Starfield</title>
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16.png">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="icon" type="image/png" sizes="48x48" href="icons/favicon-48.png">
+<style>
+  :root { color-scheme: dark; }
+  html, body {
+    height: 100%;
+    /* The page never scrolls; wheel and swipe drive the sky instead. */
+    overscroll-behavior: none;
+  }
+  body { margin: 0; background: #000; overflow: hidden; }
+  #stage { display: block; position: fixed; inset: 0; width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+
+<canvas id="stage"></canvas>
+
+<script src="vendor/three.min.js"></script>
+<script src="src/shaders_post.js"></script>
+<script src="src/postfx.js"></script>
+<script src="src/field.js"></script>
+<script src="src/sol_shaders.js"></script>
+<script src="src/sol.js"></script>
+<script src="src/starfield.js"></script>
+
+</body>
+</html>

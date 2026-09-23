@@ -642,6 +642,37 @@
         nebula.material.opacity = buildIn * buildIn * (3 - 2 * buildIn);
         uniforms.uTravel.value = continuous ? ((dragRotation + 0.06 * time) * 0.18) / group.scale.x : 0;
       },
+
+      // --- Standalone use (starfield.html) ----------------------------------
+
+      /**
+       * Lay the sky out turned 90 degrees clockwise, so its sideways drift runs
+       * down the screen. The field's own x axis now spans the view's height and
+       * its y axis the width, each covered exactly; star sizes keep the
+       * original's formula, so at the same window size they match it pixel for
+       * pixel and the density per screen area is unchanged.
+       */
+      resizeRotated(viewWidth, viewHeight, depth, cssHeight) {
+        const s = Math.max(viewWidth / 1920, viewHeight / 1080);
+        group.rotation.z = -Math.PI / 2;
+        group.scale.set(viewHeight, viewWidth, 1);
+        group.position.set(0, 0, -depth);
+        uniforms.uImageScale.value = (s * cssHeight) / viewHeight;
+        uniforms.uHalfView.value = viewHeight / (2 * group.scale.x);
+        uniforms.uPixelToField.value = viewHeight / (cssHeight * group.scale.x);
+      },
+
+      /**
+       * Drive the sky directly. `offset` is in the original's units: it adds
+       * 0.06 per second of drift, plus the drag rotation in radians.
+       */
+      step({ time, pixelRatio, buildIn, offset }) {
+        uniforms.uTime.value = time;
+        uniforms.uPixelRatio.value = pixelRatio;
+        uniforms.uBuildIn.value = buildIn;
+        nebula.material.opacity = buildIn * buildIn * (3 - 2 * buildIn);
+        uniforms.uTravel.value = (offset * 0.18) / group.scale.x;
+      },
     };
   }
 
@@ -1133,6 +1164,16 @@
       this.ready = false;
     }
   }
+
+  // The far sky on its own, for starfield.html.
+  global.SolSky = {
+    create() {
+      const owned = new Set();
+      const sky = createBackground((o) => (owned.add(o), o), false, Infinity);
+      sky.dispose = () => { for (const o of owned) o.dispose(); owned.clear(); };
+      return sky;
+    },
+  };
 
   SolPlayer.timeline = timeline;
   SolPlayer.warpClock = warpClock;

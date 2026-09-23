@@ -34,6 +34,7 @@ are loaded as separate scripts.
 | `src/main.js` | Scene, camera, transitions, frame loop, the Sol & Luna handover |
 | `src/sol.js` | Sol & Luna player: fly-through, sun, moon, eclipse |
 | `src/sol_shaders.js` | Its GLSL, generated from the extracted bundle — don't hand-edit |
+| `src/starfield.js` | `starfield.html`: Sol & Luna's far sky on its own |
 
 `?arms=<key>` picks the shape the page opens on.
 
@@ -56,6 +57,15 @@ its shaders stalls WebKit for a few hundred ms.
 The dive is timed on Sol's own clock (`DIVE` in `main.js`): Sol starts 1.2 s in,
 just before its flight, and our galaxy zooms by the same approach factor so the
 crossfade (1.8–2.35 s) lands inside the rush.
+
+## Starfield
+
+`starfield.html` is the sky behind Sol & Luna on its own: the parallax sprite
+field and the faint nebula under it, without the bodies or the ambient stars
+around them. On openai.com it drifts sideways once the intro settles; here it
+is turned 90° clockwise and drifts up, at twice the pace. Scroll, swipe, drag
+or use the arrow keys to add speed — it coasts back to the drift (`MOTION` in
+`src/starfield.js`). Scrolling against the drift slows or briefly reverses it.
 
 ## Debugging
 
